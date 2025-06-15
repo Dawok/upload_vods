@@ -20,7 +20,11 @@ SCOPES = ['https://www.googleapis.com/auth/youtube']
 def get_authenticated_service():
     creds = None
     if os.path.exists(TOKEN_CACHE):
-        creds = Credentials.from_authorized_user_info(json.loads(open(TOKEN_CACHE).read()), SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_info(json.loads(open(TOKEN_CACHE).read()), SCOPES)
+        except Exception as e:
+            print(f"{YELLOW}⚠️  Token file exists but is invalid. Will create new token.{RESET}")
+            os.remove(TOKEN_CACHE)
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
