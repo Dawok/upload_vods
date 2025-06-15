@@ -205,14 +205,15 @@ def upload_video(vod, uploaded_ids):
         send_discord_notification(error_msg, error=True)
         return False
 
-    metadata = build_metadata(vod)
-    meta_path = "tmp_video_meta.json"
-    with open(meta_path, "w") as f:
-        json.dump(metadata, f)
-
-    print(f"{CYAN}⬆️  Uploading: {metadata['title']}{RESET}")
-
     try:
+        # First try with metadata
+        metadata = build_metadata(vod)
+        meta_path = "tmp_video_meta.json"
+        with open(meta_path, "w") as f:
+            json.dump(metadata, f)
+
+        print(f"{CYAN}⬆️  Uploading: {metadata['title']}{RESET}")
+
         result = subprocess.run([
             YOUTUBEUPLOADER_BIN,
             "-secrets", CLIENT_SECRETS,
@@ -224,14 +225,30 @@ def upload_video(vod, uploaded_ids):
 
         if result.returncode == 0:
             uploaded_ids.append(vod["vod_id"])
-            save_json_file(UPLOADED_IDS_FILE, uploaded_ids)  # Save after each successful upload
+            save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
             print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
             return True
         else:
-            error_msg = f"Upload failed for: {vod['vod_id']}"
-            print(f"{RED}❌ {error_msg}{RESET}")
-            send_discord_notification(error_msg, error=True)
-            return False
+            # If metadata upload fails, try with just the filename
+            print(f"{YELLOW}⚠️  Metadata upload failed, trying with filename only{RESET}")
+            result = subprocess.run([
+                YOUTUBEUPLOADER_BIN,
+                "-secrets", CLIENT_SECRETS,
+                "-cache", TOKEN_CACHE,
+                "-filename", str(vod["video_path"]),
+                "-playlistID", playlist_id
+            ])
+
+            if result.returncode == 0:
+                uploaded_ids.append(vod["vod_id"])
+                save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
+                print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
+                return True
+            else:
+                error_msg = f"Upload failed for: {vod['vod_id']}"
+                print(f"{RED}❌ {error_msg}{RESET}")
+                send_discord_notification(error_msg, error=True)
+                return False
     except Exception as e:
         error_msg = f"Error during upload of {vod['vod_id']}: {str(e)}"
         print(f"{RED}❌ {error_msg}{RESET}")
