@@ -22,8 +22,14 @@ def get_youtube_client():
         creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
     else:
         flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
-        # For headless server, use the console flow
-        creds = flow.run_console()
+        # Use a custom port and print the URL
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        print(f"\n{YELLOW}Please visit this URL to authorize the application:{RESET}")
+        print(f"{CYAN}{auth_url}{RESET}")
+        print(f"\n{YELLOW}Enter the authorization code: {RESET}", end='')
+        code = input()
+        flow.fetch_token(code=code)
+        creds = flow.credentials
         with open(TOKEN_CACHE, "w") as token:
             token.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
