@@ -12,6 +12,13 @@ CLIENT_SECRETS = "client_secrets.json"
 TOKEN_CACHE = "request.token"
 MAX_UPLOADS = 6
 
+# ANSI colors for console output
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+CYAN = "\033[96m"
+RESET = "\033[0m"
+
 def load_json_file(path):
     if Path(path).exists():
         with open(path, "r") as f:
@@ -42,7 +49,6 @@ def find_vods():
     return vods
 
 def extract_vod_id(name):
-    # Expects [1234567890] in filename
     if "[" in name and "]" in name:
         return name.split("[")[-1].split("]")[0]
     return None
@@ -75,9 +81,8 @@ def get_or_create_playlist_id(user_name):
     if user_name in playlists:
         return playlists[user_name]
 
-    # Create playlist using youtubeuploader
     playlist_title = f"{user_name} VODs"
-    print(f"Creating playlist: {playlist_title}")
+    print(f"{YELLOW}➕ Creating playlist: {playlist_title}{RESET}")
 
     meta = {
         "title": playlist_title,
@@ -88,19 +93,17 @@ def get_or_create_playlist_id(user_name):
     with open(meta_path, "w") as f:
         json.dump(meta, f)
 
-    # Run youtubeuploader with dummy video to create playlist
     result = subprocess.run([
         YOUTUBEUPLOADER_BIN,
         "-secrets", CLIENT_SECRETS,
         "-cache", TOKEN_CACHE,
         "-metaJSON", meta_path,
-        "-filename", "-",  # dummy
+        "-filename", "-",
         "-quiet"
     ], capture_output=True, text=True)
 
     os.remove(meta_path)
 
-    # Try to extract the playlist ID from stdout
     playlist_id = None
     for line in result.stderr.splitlines() + result.stdout.splitlines():
         if "playlist ID:" in line:
@@ -109,9 +112,10 @@ def get_or_create_playlist_id(user_name):
     if playlist_id:
         playlists[user_name] = playlist_id
         save_json_file(PLAYLISTS_FILE, playlists)
+        print(f"{GREEN}✅ Created playlist ID: {playlist_id}{RESET}")
         return playlist_id
     else:
-        print(f"⚠️ Failed to create playlist for {user_name}")
+        print(f"{RED}❌ Failed to create playlist for {user_name}{RESET}")
         return None
 
 def upload_video(vod, uploaded_ids):
@@ -120,7 +124,7 @@ def upload_video(vod, uploaded_ids):
 
     playlist_id = get_or_create_playlist_id(vod["user_name"])
     if not playlist_id:
-        print(f"⚠️ Skipping upload: playlist creation failed for {vod['user_name']}")
+        print(f"{RED}⚠️  Skipping upload: no playlist available for {vod['user_name']}{RESET}")
         return False
 
     metadata = build_metadata(info, vod["user_name"])
@@ -128,7 +132,7 @@ def upload_video(vod, uploaded_ids):
     with open(meta_path, "w") as f:
         json.dump(metadata, f)
 
-    print(f"⬆️ Uploading: {metadata['title']}")
+    print(f"{CYAN}⬆️  Uploading: {metadata['title']}{RESET}")
 
     result = subprocess.run([
         YOUTUBEUPLOADER_BIN,
@@ -143,9 +147,10 @@ def upload_video(vod, uploaded_ids):
 
     if result.returncode == 0:
         uploaded_ids.append(vod["vod_id"])
+        print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
         return True
     else:
-        print(f"❌ Upload failed for {vod['vod_id']}")
+        print(f"{RED}❌ Upload failed for: {vod['vod_id']}{RESET}")
         return False
 
 def main():
@@ -153,9 +158,14 @@ def main():
     if not isinstance(uploaded_ids, list):
         uploaded_ids = []
 
+    print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
+    vods = find_vods()
+    print(f"{CYAN}🔎 Found {len(vods)} total VODs to consider{RESET}")
+
     uploads_done = 0
-    for vod in find_vods():
+    for vod in vods:
         if vod["vod_id"] in uploaded_ids:
+            print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod['vod_id']}{RESET}")
             continue
         if uploads_done >= MAX_UPLOADS:
             break
@@ -164,6 +174,8 @@ def main():
             uploads_done += 1
 
     save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
+
+    print(f"\n{CYAN}📈 Uploads complete: {uploads_done}/{MAX_UPLOADS} videos uploaded this run{RESET}")
 
 if __name__ == "__main__":
     main()
