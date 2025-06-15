@@ -59,11 +59,14 @@ def find_vods():
                         vod_id = extract_vod_id(info_file.name)
                         video_file = info_file.with_name(info_file.name.replace("-info.json", "-video.mp4"))
                         if video_file.exists():
+                            with open(info_file, "r") as f:
+                                info = json.load(f)
                             vods.append({
                                 "info_path": info_file,
                                 "video_path": video_file,
                                 "vod_id": vod_id,
-                                "user_name": user_dir.name
+                                "user_name": user_dir.name,
+                                "started_at": info.get("started_at", "")
                             })
     return vods
 
@@ -75,7 +78,9 @@ def extract_vod_id(name):
 def build_metadata(info, user_name):
     dt = datetime.strptime(info["started_at"], "%Y-%m-%dT%H:%M:%SZ")
     date_prefix = dt.strftime("%y%m%d")
+    # Clean up the title to remove any invalid characters
     title = f"{date_prefix} {info['title']}"
+    title = title.replace("_", " ").replace("⭐", "").strip()
     description = f"""Streamed by {info['user_name']}
 Game: {info.get('game_name', 'Unknown')}
 Original broadcast: {info.get('started_at', 'unknown')}
@@ -91,8 +96,7 @@ VOD ID: {info.get('id', '')}
         "language": info.get("language", "en"),
         "recordingDate": info["started_at"].split("T")[0],
         "thumbnail": thumbnail_url,
-        "privacy": "unlisted",
-        "playlistID": get_or_create_playlist_id(user_name)
+        "privacy": "unlisted"
     }
 
 def get_or_create_playlist_id(user_name):
@@ -149,8 +153,9 @@ def upload_video(vod, uploaded_ids):
         "-cache", TOKEN_CACHE,
         "-filename", str(vod["video_path"]),
         "-metaJSON", meta_path,
+        "-playlistID", playlist_id,
         "-quiet"
-    ])
+    ], capture_output=True, text=True)
 
     os.remove(meta_path)
 
@@ -169,18 +174,28 @@ def main():
 
     print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
     vods = find_vods()
+    
+    # Sort vods by user and date
+    vods.sort(key=lambda x: (x["user_name"], x["started_at"]))
+    
     print(f"{CYAN}🔎 Found {len(vods)} total VODs to consider{RESET}")
 
     uploads_done = 0
+    current_user = None
+    
     for vod in vods:
         if vod["vod_id"] in uploaded_ids:
             print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod['vod_id']}{RESET}")
             continue
-        if uploads_done >= MAX_UPLOADS:
+            
+        # If we've hit the upload limit and it's a new user, break
+        if uploads_done >= MAX_UPLOADS and vod["user_name"] != current_user:
             break
+            
         success = upload_video(vod, uploaded_ids)
         if success:
             uploads_done += 1
+            current_user = vod["user_name"]
 
     save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
 
