@@ -40,13 +40,20 @@ def get_youtube_client():
 
 def load_json_file(path):
     if Path(path).exists():
-        with open(path, "r") as f:
-            return json.load(f)
-    return {}
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"{YELLOW}⚠️  Invalid JSON in {path}, creating new file{RESET}")
+            return []
+    return []
 
 def save_json_file(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"{RED}❌ Failed to save {path}: {str(e)}{RESET}")
 
 def find_vods():
     vods = []
@@ -147,24 +154,27 @@ def upload_video(vod, uploaded_ids):
 
     print(f"{CYAN}⬆️  Uploading: {metadata['title']}{RESET}")
 
-    result = subprocess.run([
-        YOUTUBEUPLOADER_BIN,
-        "-secrets", CLIENT_SECRETS,
-        "-cache", TOKEN_CACHE,
-        "-filename", str(vod["video_path"]),
-        "-metaJSON", meta_path,
-        "-playlistID", playlist_id
-    ], capture_output=True, text=True)
+    try:
+        result = subprocess.run([
+            YOUTUBEUPLOADER_BIN,
+            "-secrets", CLIENT_SECRETS,
+            "-cache", TOKEN_CACHE,
+            "-filename", str(vod["video_path"]),
+            "-metaJSON", meta_path,
+            "-playlistID", playlist_id
+        ])
 
-    os.remove(meta_path)
-
-    if result.returncode == 0:
-        uploaded_ids.append(vod["vod_id"])
-        print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
-        return True
-    else:
-        print(f"{RED}❌ Upload failed for: {vod['vod_id']}{RESET}")
-        return False
+        if result.returncode == 0:
+            uploaded_ids.append(vod["vod_id"])
+            save_json_file(UPLOADED_IDS_FILE, uploaded_ids)  # Save after each successful upload
+            print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
+            return True
+        else:
+            print(f"{RED}❌ Upload failed for: {vod['vod_id']}{RESET}")
+            return False
+    finally:
+        if os.path.exists(meta_path):
+            os.remove(meta_path)
 
 def main():
     uploaded_ids = load_json_file(UPLOADED_IDS_FILE)
@@ -195,8 +205,6 @@ def main():
         if success:
             uploads_done += 1
             current_user = vod["user_name"]
-
-    save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
 
     print(f"\n{CYAN}📈 Uploads complete: {uploads_done}/{MAX_UPLOADS} videos uploaded this run{RESET}")
 
