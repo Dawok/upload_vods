@@ -10,20 +10,6 @@ except ImportError:
     print("Error: config.py not found. Please copy config.example.py to config.py and adjust the settings.")
     exit(1)
 
-BASE_DIR = Path("/mnt/storage/ganymede/videos")
-UPLOADED_IDS_FILE = "uploaded_ids.json"
-PLAYLISTS_FILE = "playlists.json"
-YOUTUBEUPLOADER_BIN = "youtubeuploader"
-CLIENT_SECRETS = "client_secrets.json"
-TOKEN_CACHE = "request.token"
-MAX_UPLOADS = 6
-
-# ANSI colors for console output
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-CYAN = "\033[96m"
-RESET = "\033[0m"
 
 def load_json_file(path):
     if Path(path).exists():
