@@ -3,8 +3,51 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from config import *
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 
+try:
+    from config import *
+except ImportError:
+    print("Error: config.py not found. Please copy config.example.py to config.py and adjust the settings.")
+    exit(1)
+
+# If modifying these scopes, delete the file token.json.
+SCOPES = ['https://www.googleapis.com/auth/youtube']
+
+def get_authenticated_service():
+    creds = None
+    if os.path.exists(TOKEN_CACHE):
+        creds = Credentials.from_authorized_user_info(json.loads(open(TOKEN_CACHE).read()), SCOPES)
+    
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
+            creds = flow.run_local_server(port=0)
+        
+        with open(TOKEN_CACHE, 'w') as token:
+            token.write(creds.to_json())
+    
+    return build('youtube', 'v3', credentials=creds)
+
+BASE_DIR = Path("/mnt/storage/ganymede/videos")
+UPLOADED_IDS_FILE = "uploaded_ids.json"
+PLAYLISTS_FILE = "playlists.json"
+YOUTUBEUPLOADER_BIN = "youtubeuploader"
+CLIENT_SECRETS = "client_secrets.json"
+TOKEN_CACHE = "request.token"
+MAX_UPLOADS = 6
+
+# ANSI colors for console output
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+CYAN = "\033[96m"
+RESET = "\033[0m"
 
 def load_json_file(path):
     if Path(path).exists():
@@ -71,38 +114,30 @@ def get_or_create_playlist_id(user_name):
     playlist_title = f"{user_name} VODs"
     print(f"{YELLOW}➕ Creating playlist: {playlist_title}{RESET}")
 
-    meta = {
-        "title": playlist_title,
-        "description": f"Automatically created playlist for {user_name}",
-        "privacy": "unlisted"
-    }
-    meta_path = f"tmp_playlist_meta_{user_name}.json"
-    with open(meta_path, "w") as f:
-        json.dump(meta, f)
+    try:
+        youtube = get_authenticated_service()
+        
+        # Create playlist
+        playlist_response = youtube.playlists().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": playlist_title,
+                    "description": f"Automatically created playlist for {user_name}",
+                },
+                "status": {
+                    "privacyStatus": "unlisted"
+                }
+            }
+        ).execute()
 
-    result = subprocess.run([
-        YOUTUBEUPLOADER_BIN,
-        "-secrets", CLIENT_SECRETS,
-        "-cache", TOKEN_CACHE,
-        "-metaJSON", meta_path,
-        "-filename", "-",
-        "-quiet"
-    ], capture_output=True, text=True)
-
-    os.remove(meta_path)
-
-    playlist_id = None
-    for line in result.stderr.splitlines() + result.stdout.splitlines():
-        if "playlist ID:" in line:
-            playlist_id = line.strip().split("playlist ID:")[-1].strip()
-
-    if playlist_id:
+        playlist_id = playlist_response['id']
         playlists[user_name] = playlist_id
         save_json_file(PLAYLISTS_FILE, playlists)
         print(f"{GREEN}✅ Created playlist ID: {playlist_id}{RESET}")
         return playlist_id
-    else:
-        print(f"{RED}❌ Failed to create playlist for {user_name}{RESET}")
+    except Exception as e:
+        print(f"{RED}❌ Failed to create playlist for {user_name}: {str(e)}{RESET}")
         return None
 
 def upload_video(vod, uploaded_ids):
