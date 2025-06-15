@@ -3,12 +3,7 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-
-try:
-    from config import *
-except ImportError:
-    print("Error: config.py not found. Please copy config.example.py to config.py and adjust the settings.")
-    exit(1)
+from config import *
 
 
 def load_json_file(path):
