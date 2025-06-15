@@ -21,7 +21,11 @@ def get_youtube_client():
     if Path(TOKEN_CACHE).exists():
         creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
     else:
-        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
+        flow = InstalledAppFlow.from_client_secrets_file(
+            CLIENT_SECRETS, 
+            SCOPES,
+            redirect_uri="http://localhost:8080/oauth2callback"
+        )
         # Use a custom port and print the URL
         auth_url, _ = flow.authorization_url(prompt='consent')
         print(f"\n{YELLOW}Please visit this URL to authorize the application:{RESET}")
