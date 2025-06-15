@@ -22,7 +22,8 @@ def get_youtube_client():
         creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
     else:
         flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
-        creds = flow.run_local_server(port=8080)
+        # For headless server, use the console flow
+        creds = flow.run_console()
         with open(TOKEN_CACHE, "w") as token:
             token.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
