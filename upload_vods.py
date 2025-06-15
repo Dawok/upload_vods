@@ -3,7 +3,12 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from config import *
+
+try:
+    from config import *
+except ImportError:
+    print("Error: config.py not found. Please copy config.example.py to config.py and adjust the settings.")
+    exit(1)
 
 BASE_DIR = Path("/mnt/storage/ganymede/videos")
 UPLOADED_IDS_FILE = "uploaded_ids.json"
