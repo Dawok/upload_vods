@@ -1,183 +1,169 @@
 import os
 import json
-import time
 import subprocess
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta
 
-import google.auth
-from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-
-# Paths and constants
-VIDEO_ROOT = Path("/mnt/storage/ganymede/videos")
-UPLOAD_LIMIT = 6
-UPLOAD_LOG = Path("vod_upload_log.json")
-UPLOAD_LOG.touch(exist_ok=True)
-
-# youtubeuploader config
+BASE_DIR = Path("/mnt/storage/ganymede/videos")
+UPLOADED_IDS_FILE = "uploaded_ids.json"
+PLAYLISTS_FILE = "playlists.json"
+YOUTUBEUPLOADER_BIN = "youtubeuploader"
 CLIENT_SECRETS = "client_secrets.json"
 TOKEN_CACHE = "request.token"
-YOUTUBEUPLOADER = "youtubeuploader"
-DEFAULT_PRIVACY = "unlisted"
+MAX_UPLOADS = 6
 
-# Load previously uploaded VOD IDs
-def load_recent_uploads():
-    try:
-        with open(UPLOAD_LOG, "r") as f:
+def load_json_file(path):
+    if Path(path).exists():
+        with open(path, "r") as f:
             return json.load(f)
-    except Exception:
-        return []
+    return {}
 
-# Save updated upload log
-def log_upload(vod_id, video_path):
-    logs = load_recent_uploads()
-    logs.append({
-        "timestamp": time.time(),
-        "vod_id": vod_id,
-        "video": str(video_path)
-    })
-    with open(UPLOAD_LOG, "w") as f:
-        json.dump(logs, f, indent=2)
+def save_json_file(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
 
-# Extract VOD ID from filename or JSON
-def extract_vod_id(path):
-    name = path.stem
+def find_vods():
+    vods = []
+    for user_dir in BASE_DIR.iterdir():
+        if user_dir.is_dir():
+            for session_dir in user_dir.iterdir():
+                if session_dir.is_dir():
+                    info_files = list(session_dir.glob("*-info.json"))
+                    for info_file in info_files:
+                        vod_id = extract_vod_id(info_file.name)
+                        video_file = info_file.with_name(info_file.name.replace("-info.json", "-video.mp4"))
+                        if video_file.exists():
+                            vods.append({
+                                "info_path": info_file,
+                                "video_path": video_file,
+                                "vod_id": vod_id,
+                                "user_name": user_dir.name
+                            })
+    return vods
+
+def extract_vod_id(name):
+    # Expects [1234567890] in filename
     if "[" in name and "]" in name:
         return name.split("[")[-1].split("]")[0]
     return None
 
-# Initialize YouTube API client
-def get_youtube_client():
-    creds = Credentials.from_authorized_user_file(TOKEN_CACHE)
-    return build("youtube", "v3", credentials=creds)
-
-# Create playlist if it doesn't exist
-def ensure_playlist_exists(youtube, playlist_name):
-    request = youtube.playlists().list(
-        part="snippet",
-        mine=True,
-        maxResults=50
-    )
-    response = request.execute()
-    for item in response.get("items", []):
-        if item["snippet"]["title"] == playlist_name:
-            return item["id"]
-
-    # Playlist not found, create it
-    create_request = youtube.playlists().insert(
-        part="snippet,status",
-        body={
-            "snippet": {
-                "title": playlist_name,
-                "description": f"VOD archive for {playlist_name}",
-            },
-            "status": {
-                "privacyStatus": "unlisted"
-            }
-        }
-    )
-    response = create_request.execute()
-    return response["id"]
-
-# Build upload metadata
-def build_metadata(info, playlist_id):
-    # Convert ISO date to YYMMDD
-    date = info.get("started_at", "")
-    yymmdd = ""
-    if date:
-        dt = datetime.strptime(date, "%Y-%m-%dT%H:%M:%SZ")
-        yymmdd = dt.strftime("%y%m%d")
-
-    full_title = f"{yymmdd} {info['title']}".strip()
+def build_metadata(info, user_name):
+    dt = datetime.strptime(info["started_at"], "%Y-%m-%dT%H:%M:%SZ")
+    date_prefix = dt.strftime("%y%m%d")
+    title = f"{date_prefix} {info['title']}"
+    description = f"""Streamed by {info['user_name']}
+Game: {info.get('game_name', 'Unknown')}
+Original broadcast: {info.get('started_at', 'unknown')}
+VOD ID: {info.get('id', '')}
+"""
+    tags = [info["user_name"], "Twitch VOD", info.get("game_name", "")]
+    thumbnail_url = info["thumbnail_url"].replace("{width}", "1280").replace("{height}", "720")
 
     return {
-        "title": full_title,
-        "description": f'''Streamed by {info["user_name"]}
-Game: {info.get("game_name", "Unknown")}
-Original broadcast: {info.get("started_at", "unknown")}
-VOD ID: {info.get("id", "")}
-''',
-        "tags": [info["user_name"], "Twitch VOD", info.get("game_name", "")],
+        "title": title,
+        "description": description,
+        "tags": tags,
         "language": info.get("language", "en"),
-        "recordingDate": info.get("started_at", "").split("T")[0],
-        "thumbnail": info["thumbnail_url"].replace("{width}", "1280").replace("{height}", "720"),
-        "playlistID": playlist_id,
-        "privacy": DEFAULT_PRIVACY
+        "recordingDate": info["started_at"].split("T")[0],
+        "thumbnail": thumbnail_url,
+        "privacy": "unlisted",
+        "playlistID": get_or_create_playlist_id(user_name)
     }
 
+def get_or_create_playlist_id(user_name):
+    playlists = load_json_file(PLAYLISTS_FILE)
+    if user_name in playlists:
+        return playlists[user_name]
 
-# Upload with youtubeuploader
-def upload_video(video_path, info_path, meta):
-    args = [
-        YOUTUBEUPLOADER,
+    # Create playlist using youtubeuploader
+    playlist_title = f"{user_name} VODs"
+    print(f"Creating playlist: {playlist_title}")
+
+    meta = {
+        "title": playlist_title,
+        "description": f"Automatically created playlist for {user_name}",
+        "privacy": "unlisted"
+    }
+    meta_path = f"tmp_playlist_meta_{user_name}.json"
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+
+    # Run youtubeuploader with dummy video to create playlist
+    result = subprocess.run([
+        YOUTUBEUPLOADER_BIN,
         "-secrets", CLIENT_SECRETS,
         "-cache", TOKEN_CACHE,
-        "-filename", str(video_path),
-        "-title", meta["title"],
-        "-description", meta["description"],
-        "-tags", ",".join(meta["tags"]),
-        "-language", meta["language"],
-        "-recordingDate", meta["recordingDate"],
-        "-thumbnail", meta["thumbnail"],
-        "-privacy", meta["privacy"],
-        "-playlistID", meta["playlistID"]
-    ]
+        "-metaJSON", meta_path,
+        "-filename", "-",  # dummy
+        "-quiet"
+    ], capture_output=True, text=True)
 
-    print(f"Uploading: {video_path}")
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if result.returncode == 0:
-        print("Upload succeeded.")
-        return True
+    os.remove(meta_path)
+
+    # Try to extract the playlist ID from stdout
+    playlist_id = None
+    for line in result.stderr.splitlines() + result.stdout.splitlines():
+        if "playlist ID:" in line:
+            playlist_id = line.strip().split("playlist ID:")[-1].strip()
+
+    if playlist_id:
+        playlists[user_name] = playlist_id
+        save_json_file(PLAYLISTS_FILE, playlists)
+        return playlist_id
     else:
-        print("Upload failed:\n", result.stderr.decode())
+        print(f"⚠️ Failed to create playlist for {user_name}")
+        return None
+
+def upload_video(vod, uploaded_ids):
+    with open(vod["info_path"], "r") as f:
+        info = json.load(f)
+
+    playlist_id = get_or_create_playlist_id(vod["user_name"])
+    if not playlist_id:
+        print(f"⚠️ Skipping upload: playlist creation failed for {vod['user_name']}")
         return False
 
-# Main logic
+    metadata = build_metadata(info, vod["user_name"])
+    meta_path = "tmp_video_meta.json"
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f)
+
+    print(f"⬆️ Uploading: {metadata['title']}")
+
+    result = subprocess.run([
+        YOUTUBEUPLOADER_BIN,
+        "-secrets", CLIENT_SECRETS,
+        "-cache", TOKEN_CACHE,
+        "-filename", str(vod["video_path"]),
+        "-metaJSON", meta_path,
+        "-quiet"
+    ])
+
+    os.remove(meta_path)
+
+    if result.returncode == 0:
+        uploaded_ids.append(vod["vod_id"])
+        return True
+    else:
+        print(f"❌ Upload failed for {vod['vod_id']}")
+        return False
+
 def main():
-    uploaded_log = load_recent_uploads()
-    uploaded_ids = {entry["vod_id"] for entry in uploaded_log}
-    recent_uploads = [e for e in uploaded_log if time.time() - e["timestamp"] < 86400]
+    uploaded_ids = load_json_file(UPLOADED_IDS_FILE)
+    if not isinstance(uploaded_ids, list):
+        uploaded_ids = []
 
-    if len(recent_uploads) >= UPLOAD_LIMIT:
-        print("Reached daily upload limit.")
-        return
-
-    youtube = get_youtube_client()
-
-    for user_dir in VIDEO_ROOT.iterdir():
-        if not user_dir.is_dir():
+    uploads_done = 0
+    for vod in find_vods():
+        if vod["vod_id"] in uploaded_ids:
             continue
+        if uploads_done >= MAX_UPLOADS:
+            break
+        success = upload_video(vod, uploaded_ids)
+        if success:
+            uploads_done += 1
 
-        for subfolder in user_dir.iterdir():
-            if not subfolder.is_dir():
-                continue
-
-            for info_path in subfolder.glob("*-info.json"):
-                vod_id = extract_vod_id(info_path)
-                if not vod_id or vod_id in uploaded_ids:
-                    continue
-
-                video_path = info_path.with_name(info_path.name.replace("-info.json", "-video.mp4"))
-                if not video_path.exists():
-                    print(f"Missing video for {info_path}")
-                    continue
-
-                with open(info_path, "r") as f:
-                    info = json.load(f)
-
-                playlist_name = f"{info['user_name']} VODs"
-                playlist_id = ensure_playlist_exists(youtube, playlist_name)
-
-                metadata = build_metadata(info, playlist_id)
-                success = upload_video(video_path, info_path, metadata)
-
-                if success:
-                    log_upload(vod_id, video_path)
-                    recent_uploads.append({"vod_id": vod_id, "timestamp": time.time()})
-                    if len(recent_uploads) >= UPLOAD_LIMIT:
-                        print("Reached upload limit.")
-                        return
+    save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
 
 if __name__ == "__main__":
     main()
