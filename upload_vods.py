@@ -3,10 +3,9 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
 try:
     from config import *
@@ -14,44 +13,19 @@ except ImportError:
     print("Error: config.py not found. Please copy config.example.py to config.py and adjust the settings.")
     exit(1)
 
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/youtube']
+# Scopes required for managing playlists
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
-def get_authenticated_service():
+def get_youtube_client():
     creds = None
-    if os.path.exists(TOKEN_CACHE):
-        try:
-            creds = Credentials.from_authorized_user_info(json.loads(open(TOKEN_CACHE).read()), SCOPES)
-        except Exception as e:
-            print(f"{YELLOW}⚠️  Token file exists but is invalid. Will create new token.{RESET}")
-            os.remove(TOKEN_CACHE)
-    
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
-            creds = flow.run_local_server(port=0)
-        
-        with open(TOKEN_CACHE, 'w') as token:
+    if Path(TOKEN_CACHE).exists():
+        creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
+        creds = flow.run_local_server(port=8080)
+        with open(TOKEN_CACHE, "w") as token:
             token.write(creds.to_json())
-    
-    return build('youtube', 'v3', credentials=creds)
-
-BASE_DIR = Path("/mnt/storage/ganymede/videos")
-UPLOADED_IDS_FILE = "uploaded_ids.json"
-PLAYLISTS_FILE = "playlists.json"
-YOUTUBEUPLOADER_BIN = "youtubeuploader"
-CLIENT_SECRETS = "client_secrets.json"
-TOKEN_CACHE = "request.token"
-MAX_UPLOADS = 6
-
-# ANSI colors for console output
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-CYAN = "\033[96m"
-RESET = "\033[0m"
+    return build("youtube", "v3", credentials=creds)
 
 def load_json_file(path):
     if Path(path).exists():
@@ -119,23 +93,21 @@ def get_or_create_playlist_id(user_name):
     print(f"{YELLOW}➕ Creating playlist: {playlist_title}{RESET}")
 
     try:
-        youtube = get_authenticated_service()
-        
-        # Create playlist
-        playlist_response = youtube.playlists().insert(
+        youtube = get_youtube_client()
+        request = youtube.playlists().insert(
             part="snippet,status",
             body={
                 "snippet": {
                     "title": playlist_title,
-                    "description": f"Automatically created playlist for {user_name}",
+                    "description": f"Automatically created playlist for {user_name}"
                 },
                 "status": {
                     "privacyStatus": "unlisted"
                 }
             }
-        ).execute()
-
-        playlist_id = playlist_response['id']
+        )
+        response = request.execute()
+        playlist_id = response["id"]
         playlists[user_name] = playlist_id
         save_json_file(PLAYLISTS_FILE, playlists)
         print(f"{GREEN}✅ Created playlist ID: {playlist_id}{RESET}")
