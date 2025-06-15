@@ -18,6 +18,7 @@ DISCORD_WEBHOOK_URL = ""  # Add your Discord webhook URL here
 
 # Upload limits
 MAX_UPLOADS = 6
+VIDEO_PRIVACY = "unlisted"  # One of: "private", "unlisted", "public"
 
 # ANSI colors for console output
 GREEN = "\033[92m"

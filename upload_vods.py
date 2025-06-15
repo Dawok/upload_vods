@@ -162,7 +162,7 @@ VOD ID: {vod['vod_id']}
         "language": info.get("language", "en"),
         "recordingDate": info.get("started_at", "").split("T")[0],
         "thumbnail": thumbnail_url,
-        "privacy": "unlisted"
+        "privacy": VIDEO_PRIVACY
     }
 
 def get_or_create_playlist_id(user_name):
@@ -183,7 +183,7 @@ def get_or_create_playlist_id(user_name):
                     "description": f"Automatically created playlist for {user_name}"
                 },
                 "status": {
-                    "privacyStatus": "unlisted"
+                    "privacyStatus": VIDEO_PRIVACY
                 }
             }
         )
@@ -228,7 +228,8 @@ def upload_video(vod, uploaded_ids):
             "-cache", TOKEN_CACHE,
             "-filename", str(vod["video_path"]),
             "-metaJSON", meta_path,
-            "-playlistID", playlist_id
+            "-playlistID", playlist_id,
+            "-privacy", VIDEO_PRIVACY
         ])
 
         if result.returncode != 0:
@@ -247,7 +248,8 @@ def upload_video(vod, uploaded_ids):
                     "-cache", TOKEN_CACHE,
                     "-filename", str(vod["video_path"]),
                     "-metaJSON", meta_path,
-                    "-playlistID", playlist_id
+                    "-playlistID", playlist_id,
+                    "-privacy", VIDEO_PRIVACY
                 ])
 
         if result.returncode == 0:
