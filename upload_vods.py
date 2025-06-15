@@ -153,8 +153,7 @@ def upload_video(vod, uploaded_ids):
         "-cache", TOKEN_CACHE,
         "-filename", str(vod["video_path"]),
         "-metaJSON", meta_path,
-        "-playlistID", playlist_id,
-        "-quiet"
+        "-playlistID", playlist_id
     ], capture_output=True, text=True)
 
     os.remove(meta_path)
