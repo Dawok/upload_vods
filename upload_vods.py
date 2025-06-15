@@ -1,6 +1,7 @@
 import os
 import json
 import subprocess
+import requests
 from datetime import datetime
 from pathlib import Path
 from google.oauth2.credentials import Credentials
@@ -16,10 +17,33 @@ except ImportError:
 # Scopes required for managing playlists
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
+def send_discord_notification(message, error=False):
+    if not DISCORD_WEBHOOK_URL:
+        return
+    
+    color = 0xFF0000 if error else 0x00FF00
+    data = {
+        "embeds": [{
+            "title": "VOD Upload Status",
+            "description": message,
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat()
+        }]
+    }
+    
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=data)
+    except Exception as e:
+        print(f"{RED}❌ Failed to send Discord notification: {str(e)}{RESET}")
+
 def get_youtube_client():
     creds = None
     if Path(TOKEN_CACHE).exists():
-        creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
+        except Exception as e:
+            send_discord_notification(f"Token file is invalid or expired: {str(e)}", error=True)
+            raise
     else:
         flow = InstalledAppFlow.from_client_secrets_file(
             CLIENT_SECRETS, 
@@ -66,14 +90,18 @@ def find_vods():
                         vod_id = extract_vod_id(info_file.name)
                         video_file = info_file.with_name(info_file.name.replace("-info.json", "-video.mp4"))
                         if video_file.exists():
-                            with open(info_file, "r") as f:
-                                info = json.load(f)
+                            try:
+                                with open(info_file, "r") as f:
+                                    info = json.load(f)
+                            except Exception:
+                                info = {}
                             vods.append({
                                 "info_path": info_file,
                                 "video_path": video_file,
                                 "vod_id": vod_id,
                                 "user_name": user_dir.name,
-                                "started_at": info.get("started_at", "")
+                                "started_at": info.get("started_at", ""),
+                                "info": info
                             })
     return vods
 
@@ -82,26 +110,49 @@ def extract_vod_id(name):
         return name.split("[")[-1].split("]")[0]
     return None
 
-def build_metadata(info, user_name):
-    dt = datetime.strptime(info["started_at"], "%Y-%m-%dT%H:%M:%SZ")
-    date_prefix = dt.strftime("%y%m%d")
-    # Clean up the title to remove any invalid characters
-    title = f"{date_prefix} {info['title']}"
+def get_title_from_filename(filename):
+    # Extract the title part from the filename (between the date and the VOD ID)
+    parts = filename.split(" [")
+    if len(parts) > 1:
+        title = parts[0].split(" ", 1)[1]  # Remove the date prefix
+        return title.replace("_", " ").replace("⭐", "").strip()
+    return None
+
+def build_metadata(vod):
+    info = vod["info"]
+    try:
+        dt = datetime.strptime(info.get("started_at", ""), "%Y-%m-%dT%H:%M:%SZ")
+        date_prefix = dt.strftime("%y%m%d")
+    except (ValueError, TypeError):
+        # Fallback to filename date if info date is invalid
+        filename_date = vod["video_path"].name.split(" ")[0]
+        date_prefix = filename_date.replace("-", "")[2:]  # Convert YYYY-MM-DD to YYMMDD
+
+    # Try to get title from info, fallback to filename
+    title = info.get("title", "")
+    if not title:
+        title = get_title_from_filename(vod["video_path"].name)
+    
+    if not title:
+        title = f"VOD {vod['vod_id']}"  # Final fallback
+    
+    title = f"{date_prefix} {title}"
     title = title.replace("_", " ").replace("⭐", "").strip()
-    description = f"""Streamed by {info['user_name']}
+
+    description = f"""Streamed by {vod['user_name']}
 Game: {info.get('game_name', 'Unknown')}
 Original broadcast: {info.get('started_at', 'unknown')}
-VOD ID: {info.get('id', '')}
+VOD ID: {vod['vod_id']}
 """
-    tags = [info["user_name"], "Twitch VOD", info.get("game_name", "")]
-    thumbnail_url = info["thumbnail_url"].replace("{width}", "1280").replace("{height}", "720")
+    tags = [vod['user_name'], "Twitch VOD", info.get("game_name", "")]
+    thumbnail_url = info.get("thumbnail_url", "").replace("{width}", "1280").replace("{height}", "720")
 
     return {
         "title": title,
         "description": description,
         "tags": tags,
         "language": info.get("language", "en"),
-        "recordingDate": info["started_at"].split("T")[0],
+        "recordingDate": info.get("started_at", "").split("T")[0],
         "thumbnail": thumbnail_url,
         "privacy": "unlisted"
     }
@@ -135,19 +186,26 @@ def get_or_create_playlist_id(user_name):
         print(f"{GREEN}✅ Created playlist ID: {playlist_id}{RESET}")
         return playlist_id
     except Exception as e:
-        print(f"{RED}❌ Failed to create playlist for {user_name}: {str(e)}{RESET}")
+        error_msg = f"Failed to create playlist for {user_name}: {str(e)}"
+        print(f"{RED}❌ {error_msg}{RESET}")
+        send_discord_notification(error_msg, error=True)
         return None
 
 def upload_video(vod, uploaded_ids):
-    with open(vod["info_path"], "r") as f:
-        info = json.load(f)
+    try:
+        with open(vod["info_path"], "r") as f:
+            vod["info"] = json.load(f)
+    except Exception:
+        vod["info"] = {}
 
     playlist_id = get_or_create_playlist_id(vod["user_name"])
     if not playlist_id:
-        print(f"{RED}⚠️  Skipping upload: no playlist available for {vod['user_name']}{RESET}")
+        error_msg = f"Skipping upload: no playlist available for {vod['user_name']}"
+        print(f"{RED}⚠️  {error_msg}{RESET}")
+        send_discord_notification(error_msg, error=True)
         return False
 
-    metadata = build_metadata(info, vod["user_name"])
+    metadata = build_metadata(vod)
     meta_path = "tmp_video_meta.json"
     with open(meta_path, "w") as f:
         json.dump(metadata, f)
@@ -170,43 +228,56 @@ def upload_video(vod, uploaded_ids):
             print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
             return True
         else:
-            print(f"{RED}❌ Upload failed for: {vod['vod_id']}{RESET}")
+            error_msg = f"Upload failed for: {vod['vod_id']}"
+            print(f"{RED}❌ {error_msg}{RESET}")
+            send_discord_notification(error_msg, error=True)
             return False
+    except Exception as e:
+        error_msg = f"Error during upload of {vod['vod_id']}: {str(e)}"
+        print(f"{RED}❌ {error_msg}{RESET}")
+        send_discord_notification(error_msg, error=True)
+        return False
     finally:
         if os.path.exists(meta_path):
             os.remove(meta_path)
 
 def main():
-    uploaded_ids = load_json_file(UPLOADED_IDS_FILE)
-    if not isinstance(uploaded_ids, list):
-        uploaded_ids = []
+    try:
+        uploaded_ids = load_json_file(UPLOADED_IDS_FILE)
+        if not isinstance(uploaded_ids, list):
+            uploaded_ids = []
 
-    print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
-    vods = find_vods()
-    
-    # Sort vods by user and date
-    vods.sort(key=lambda x: (x["user_name"], x["started_at"]))
-    
-    print(f"{CYAN}🔎 Found {len(vods)} total VODs to consider{RESET}")
+        print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
+        vods = find_vods()
+        
+        # Sort vods by user and date
+        vods.sort(key=lambda x: (x["user_name"], x["started_at"]))
+        
+        print(f"{CYAN}🔎 Found {len(vods)} total VODs to consider{RESET}")
 
-    uploads_done = 0
-    current_user = None
-    
-    for vod in vods:
-        if vod["vod_id"] in uploaded_ids:
-            print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod['vod_id']}{RESET}")
-            continue
-            
-        # If we've hit the upload limit and it's a new user, break
-        if uploads_done >= MAX_UPLOADS and vod["user_name"] != current_user:
-            break
-            
-        success = upload_video(vod, uploaded_ids)
-        if success:
-            uploads_done += 1
-            current_user = vod["user_name"]
+        uploads_done = 0
+        current_user = None
+        
+        for vod in vods:
+            if vod["vod_id"] in uploaded_ids:
+                print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod['vod_id']}{RESET}")
+                continue
+                
+            # If we've hit the upload limit and it's a new user, break
+            if uploads_done >= MAX_UPLOADS and vod["user_name"] != current_user:
+                break
+                
+            success = upload_video(vod, uploaded_ids)
+            if success:
+                uploads_done += 1
+                current_user = vod["user_name"]
 
-    print(f"\n{CYAN}📈 Uploads complete: {uploads_done}/{MAX_UPLOADS} videos uploaded this run{RESET}")
+        print(f"\n{CYAN}📈 Uploads complete: {uploads_done}/{MAX_UPLOADS} videos uploaded this run{RESET}")
+        send_discord_notification(f"Upload session complete: {uploads_done}/{MAX_UPLOADS} videos uploaded")
+    except Exception as e:
+        error_msg = f"Script failed: {str(e)}"
+        print(f"{RED}❌ {error_msg}{RESET}")
+        send_discord_notification(error_msg, error=True)
 
 if __name__ == "__main__":
     main()
