@@ -1,26 +1,43 @@
 import os
 import json
+import time
+from datetime import datetime, timedelta
 import subprocess
-import requests
-from datetime import datetime
 from pathlib import Path
+import requests
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from config import *
 
-try:
-    from config import *
-except ImportError:
-    print("Error: config.py not found. Please copy config.example.py to config.py and adjust the settings.")
-    exit(1)
+# ANSI colors for console output
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+CYAN = "\033[96m"
+RESET = "\033[0m"
 
-# Scopes required for managing playlists
-SCOPES = ["https://www.googleapis.com/auth/youtube"]
+# File paths
+UPLOADED_IDS_FILE = "uploaded_ids.json"
+PLAYLISTS_FILE = "playlists.json"
+QUOTA_RESET_FILE = "quota_reset.json"
+
+def load_json_file(filename):
+    try:
+        with open(filename, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {} if filename == PLAYLISTS_FILE else []
+
+def save_json_file(filename, data):
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=2)
 
 def send_discord_notification(message, error=False):
     if not DISCORD_WEBHOOK_URL:
         return
-    
+
     color = 0xFF0000 if error else 0x00FF00
     data = {
         "embeds": [{
@@ -30,101 +47,65 @@ def send_discord_notification(message, error=False):
             "timestamp": datetime.utcnow().isoformat()
         }]
     }
-    
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=data)
     except Exception as e:
-        print(f"{RED}❌ Failed to send Discord notification: {str(e)}{RESET}")
+        print(f"{RED}Failed to send Discord notification: {str(e)}{RESET}")
 
 def get_youtube_client():
     creds = None
-    if Path(TOKEN_CACHE).exists():
-        try:
-            creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
-        except Exception as e:
-            send_discord_notification(f"Token file is invalid or expired: {str(e)}", error=True)
-            raise
-    else:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            CLIENT_SECRETS, 
-            SCOPES,
-            redirect_uri="http://localhost:8080/oauth2callback"
-        )
-        # Use a custom port and print the URL
-        auth_url, _ = flow.authorization_url(prompt='consent')
-        print(f"\n{YELLOW}Please visit this URL to authorize the application:{RESET}")
-        print(f"{CYAN}{auth_url}{RESET}")
-        print(f"\n{YELLOW}Enter the authorization code: {RESET}", end='')
-        code = input()
-        flow.fetch_token(code=code)
-        creds = flow.credentials
+    if os.path.exists(TOKEN_CACHE):
+        creds = Credentials.from_authorized_user_info(json.load(open(TOKEN_CACHE)))
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, ["https://www.googleapis.com/auth/youtube"])
+            creds = flow.run_local_server(port=0)
+        
         with open(TOKEN_CACHE, "w") as token:
-            token.write(creds.to_json())
+            json.dump({
+                "token": creds.token,
+                "refresh_token": creds.refresh_token,
+                "token_uri": creds.token_uri,
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "scopes": creds.scopes
+            }, token)
+
     return build("youtube", "v3", credentials=creds)
 
-def load_json_file(path):
-    if Path(path).exists():
-        try:
-            with open(path, "r") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            print(f"{YELLOW}⚠️  Invalid JSON in {path}, creating new file{RESET}")
-            return []
-    return []
+def check_quota_limit():
+    quota_data = load_json_file(QUOTA_RESET_FILE)
+    if "reset_time" in quota_data:
+        reset_time = datetime.fromisoformat(quota_data["reset_time"])
+        if datetime.now() < reset_time:
+            remaining_time = reset_time - datetime.now()
+            hours = int(remaining_time.total_seconds() / 3600)
+            minutes = int((remaining_time.total_seconds() % 3600) / 60)
+            print(f"{YELLOW}⚠️  YouTube API quota exceeded. Resuming in {hours}h {minutes}m{RESET}")
+            return False
+    return True
 
-def save_json_file(path, data):
-    try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"{RED}❌ Failed to save {path}: {str(e)}{RESET}")
+def set_quota_cooldown():
+    reset_time = datetime.now() + timedelta(hours=24)
+    save_json_file(QUOTA_RESET_FILE, {"reset_time": reset_time.isoformat()})
+    print(f"{YELLOW}⚠️  Setting 24-hour cooldown for YouTube API quota. Will resume at {reset_time.isoformat()}{RESET}")
 
-def find_vods():
-    vods = []
-    for user_dir in BASE_DIR.iterdir():
-        if user_dir.is_dir():
-            for session_dir in user_dir.iterdir():
-                if session_dir.is_dir():
-                    info_files = list(session_dir.glob("*-info.json"))
-                    for info_file in info_files:
-                        vod_id = extract_vod_id(info_file.name)
-                        video_file = info_file.with_name(info_file.name.replace("-info.json", "-video.mp4"))
-                        if video_file.exists():
-                            try:
-                                with open(info_file, "r") as f:
-                                    info = json.load(f)
-                            except Exception:
-                                info = {}
-                            vods.append({
-                                "info_path": info_file,
-                                "video_path": video_file,
-                                "vod_id": vod_id,
-                                "user_name": user_dir.name,
-                                "started_at": info.get("started_at", ""),
-                                "info": info
-                            })
-    return vods
-
-def extract_vod_id(name):
-    if "[" in name and "]" in name:
-        return name.split("[")[-1].split("]")[0]
-    return None
+def clean_title(title):
+    # Remove invalid characters and trim to 100 characters
+    invalid_chars = ['"', "'", "\\", "/", ":", "*", "?", "<", ">", "|"]
+    for char in invalid_chars:
+        title = title.replace(char, "")
+    return title[:100]
 
 def get_title_from_filename(filename):
-    # Extract the title part from the filename (between the date and the VOD ID)
-    parts = filename.split(" [")
+    # Extract title from filename, removing date and VOD ID
+    parts = filename.split(" ", 1)
     if len(parts) > 1:
-        title = parts[0].split(" ", 1)[1]  # Remove the date prefix
-        return title.replace("_", " ").replace("⭐", "").strip()
+        return parts[1].rsplit(" [", 1)[0]  # Remove VOD ID at the end
     return None
-
-def clean_title(title, max_length=100):
-    # Remove any invalid characters and trim to max length
-    title = title.replace("_", " ").replace("⭐", "").strip()
-    if len(title) > max_length:
-        # Try to cut at a word boundary
-        title = title[:max_length].rsplit(" ", 1)[0]
-    return title
 
 def build_metadata(vod):
     info = vod["info"]
@@ -166,6 +147,9 @@ VOD ID: {vod['vod_id']}
     }
 
 def get_or_create_playlist_id(user_name):
+    if not check_quota_limit():
+        return None
+
     playlists = load_json_file(PLAYLISTS_FILE)
     if user_name in playlists:
         return playlists[user_name]
@@ -194,12 +178,17 @@ def get_or_create_playlist_id(user_name):
         print(f"{GREEN}✅ Created playlist ID: {playlist_id}{RESET}")
         return playlist_id
     except Exception as e:
+        if "quotaExceeded" in str(e):
+            set_quota_cooldown()
         error_msg = f"Failed to create playlist for {user_name}: {str(e)}"
         print(f"{RED}❌ {error_msg}{RESET}")
         send_discord_notification(error_msg, error=True)
         return None
 
 def upload_video(vod, uploaded_ids):
+    if not check_quota_limit():
+        return False
+
     try:
         with open(vod["info_path"], "r") as f:
             vod["info"] = json.load(f)
@@ -221,7 +210,6 @@ def upload_video(vod, uploaded_ids):
     print(f"{CYAN}⬆️  Uploading: {metadata['title']}{RESET}")
 
     try:
-        # First try with metadata
         result = subprocess.run([
             YOUTUBEUPLOADER_BIN,
             "-secrets", CLIENT_SECRETS,
@@ -232,38 +220,28 @@ def upload_video(vod, uploaded_ids):
             "-privacy", VIDEO_PRIVACY
         ])
 
-        if result.returncode != 0:
-            # If metadata upload fails, try with just the filename
-            print(f"{YELLOW}⚠️  Metadata upload failed, trying with filename only{RESET}")
-            filename_title = get_title_from_filename(vod["video_path"].name)
-            if filename_title:
-                filename_title = clean_title(f"{metadata['title'].split(' ', 1)[0]} {filename_title}")
-                metadata["title"] = filename_title
-                with open(meta_path, "w") as f:
-                    json.dump(metadata, f)
-                
-                result = subprocess.run([
-                    YOUTUBEUPLOADER_BIN,
-                    "-secrets", CLIENT_SECRETS,
-                    "-cache", TOKEN_CACHE,
-                    "-filename", str(vod["video_path"]),
-                    "-metaJSON", meta_path,
-                    "-playlistID", playlist_id,
-                    "-privacy", VIDEO_PRIVACY
-                ])
-
         if result.returncode == 0:
             uploaded_ids.append(vod["vod_id"])
             save_json_file(UPLOADED_IDS_FILE, uploaded_ids)  # Save after each successful upload
             print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
             return True
         else:
-            error_msg = f"Upload failed for: {vod['vod_id']}"
+            error_output = str(result.stderr)
+            if "quotaExceeded" in error_output:
+                set_quota_cooldown()
+                error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
+            else:
+                error_msg = f"Upload failed for: {vod['vod_id']}"
             print(f"{RED}❌ {error_msg}{RESET}")
             send_discord_notification(error_msg, error=True)
             return False
     except Exception as e:
-        error_msg = f"Error during upload of {vod['vod_id']}: {str(e)}"
+        error_msg = str(e)
+        if "quotaExceeded" in error_msg:
+            set_quota_cooldown()
+            error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
+        else:
+            error_msg = f"Error during upload of {vod['vod_id']}: {error_msg}"
         print(f"{RED}❌ {error_msg}{RESET}")
         send_discord_notification(error_msg, error=True)
         return False
@@ -272,42 +250,56 @@ def upload_video(vod, uploaded_ids):
             os.remove(meta_path)
 
 def main():
-    try:
-        uploaded_ids = load_json_file(UPLOADED_IDS_FILE)
-        if not isinstance(uploaded_ids, list):
-            uploaded_ids = []
+    if not os.path.exists(YOUTUBEUPLOADER_BIN):
+        print(f"{RED}❌ youtubeuploader binary not found at {YOUTUBEUPLOADER_BIN}{RESET}")
+        return
 
-        print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
-        vods = find_vods()
-        
-        # Sort vods by user and date
-        vods.sort(key=lambda x: (x["user_name"], x["started_at"]))
-        
-        print(f"{CYAN}🔎 Found {len(vods)} total VODs to consider{RESET}")
+    if not os.path.exists(CLIENT_SECRETS):
+        print(f"{RED}❌ OAuth2 client secrets file not found at {CLIENT_SECRETS}{RESET}")
+        return
 
-        uploads_done = 0
-        current_user = None
-        
-        for vod in vods:
-            if vod["vod_id"] in uploaded_ids:
-                print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod['vod_id']}{RESET}")
+    if not check_quota_limit():
+        return
+
+    uploaded_ids = load_json_file(UPLOADED_IDS_FILE)
+    vods_to_upload = []
+
+    # Scan for VODs
+    for user_dir in Path(".").glob("*"):
+        if not user_dir.is_dir() or user_dir.name.startswith("."):
+            continue
+
+        user_name = user_dir.name
+        for vod_dir in user_dir.glob("*"):
+            if not vod_dir.is_dir():
                 continue
-                
-            # If we've hit the upload limit and it's a new user, break
-            if uploads_done >= MAX_UPLOADS and vod["user_name"] != current_user:
-                break
-                
-            success = upload_video(vod, uploaded_ids)
-            if success:
-                uploads_done += 1
-                current_user = vod["user_name"]
 
-        print(f"\n{CYAN}📈 Uploads complete: {uploads_done}/{MAX_UPLOADS} videos uploaded this run{RESET}")
-        send_discord_notification(f"Upload session complete: {uploads_done}/{MAX_UPLOADS} videos uploaded")
-    except Exception as e:
-        error_msg = f"Script failed: {str(e)}"
-        print(f"{RED}❌ {error_msg}{RESET}")
-        send_discord_notification(error_msg, error=True)
+            vod_id = vod_dir.name.split("-")[-1]
+            if vod_id in uploaded_ids:
+                continue
+
+            video_path = next(vod_dir.glob("*.mp4"), None)
+            info_path = next(vod_dir.glob("*.json"), None)
+
+            if video_path and info_path:
+                vods_to_upload.append({
+                    "vod_id": vod_id,
+                    "user_name": user_name,
+                    "video_path": video_path,
+                    "info_path": info_path
+                })
+
+    if not vods_to_upload:
+        print(f"{GREEN}✅ No new VODs to upload{RESET}")
+        return
+
+    print(f"{CYAN}📦 Found {len(vods_to_upload)} VODs to upload{RESET}")
+
+    # Upload VODs
+    for vod in vods_to_upload:
+        if not check_quota_limit():
+            break
+        upload_video(vod, uploaded_ids)
 
 if __name__ == "__main__":
     main()
