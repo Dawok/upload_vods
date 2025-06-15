@@ -3,6 +3,7 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from config import *
 
 BASE_DIR = Path("/mnt/storage/ganymede/videos")
 UPLOADED_IDS_FILE = "uploaded_ids.json"
