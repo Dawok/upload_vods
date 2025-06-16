@@ -295,17 +295,23 @@ def main():
                 continue
 
             # Find video and info files
-            video_path = next(vod_dir.glob("*-video.mp4"), None)
-            info_path = next(vod_dir.glob("*-info.json"), None)
+            video_files = list(vod_dir.glob("*.mp4"))
+            info_files = list(vod_dir.glob("*.json"))
 
-            if video_path and info_path:
-                print(f"{CYAN}📦 Found VOD to upload: {vod_id}{RESET}")
-                vods_to_upload.append({
-                    "vod_id": vod_id,
-                    "user_name": user_name,
-                    "video_path": video_path,
-                    "info_path": info_path
-                })
+            if not video_files or not info_files:
+                continue
+
+            # Get the first video and info file
+            video_path = video_files[0]
+            info_path = info_files[0]
+
+            print(f"{CYAN}📦 Found VOD to upload: {vod_id} ({video_path.name}){RESET}")
+            vods_to_upload.append({
+                "vod_id": vod_id,
+                "user_name": user_name,
+                "video_path": video_path,
+                "info_path": info_path
+            })
 
     if not vods_to_upload:
         print(f"{GREEN}✅ No new VODs to upload{RESET}")
