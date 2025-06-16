@@ -265,7 +265,14 @@ def main():
     vods_to_upload = []
 
     # Scan for VODs
-    for user_dir in Path(".").glob("*"):
+    base_dir = Path(BASE_DIR)
+    if not base_dir.exists():
+        print(f"{RED}❌ Base directory not found: {BASE_DIR}{RESET}")
+        return
+
+    print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
+    
+    for user_dir in base_dir.glob("*"):
         if not user_dir.is_dir() or user_dir.name.startswith("."):
             continue
 

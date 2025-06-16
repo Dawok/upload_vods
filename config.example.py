@@ -1,27 +1,23 @@
 import os
 from pathlib import Path
 
-# Base directory where VODs are stored
-BASE_DIR = Path("/mnt/storage/ganymede/videos")
+# Base directory for VOD storage
+BASE_DIR = "/mnt/storage/ganymede/videos"  # Base directory containing VOD folders
 
 # File paths for tracking uploads and playlists
 UPLOADED_IDS_FILE = "uploaded_ids.json"
 PLAYLISTS_FILE = "playlists.json"
 
-# YouTube uploader configuration
+# YouTube API settings
 YOUTUBEUPLOADER_BIN = "youtubeuploader"  # Path to youtubeuploader binary
 CLIENT_SECRETS = "client_secrets.json"   # Path to OAuth2 client secrets file
 TOKEN_CACHE = "request.token"            # Path to store OAuth2 token cache
 
-# Discord webhook configuration
-DISCORD_WEBHOOK_URL = ""  # Add your Discord webhook URL here
+# Discord webhook URL for notifications
+DISCORD_WEBHOOK_URL = ""
 
-
+# Video settings
 VIDEO_PRIVACY = "unlisted"  # Privacy status for uploaded videos (private, unlisted, or public)
-
-# Twitch API settings
-TWITCH_CLIENT_ID = ""      # Your Twitch API client ID
-TWITCH_CLIENT_SECRET = ""  # Your Twitch API client secret
 
 # ANSI colors for console output
 GREEN = "\033[92m"
