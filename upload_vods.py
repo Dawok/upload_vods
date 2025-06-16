@@ -2,11 +2,13 @@ import os
 import json
 import subprocess
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+import time
+import sys
 
 try:
     from config import *
@@ -199,6 +201,27 @@ def get_or_create_playlist_id(user_name):
         send_discord_notification(error_msg, error=True)
         return None
 
+def handle_quota_exceeded():
+    """Handle YouTube API quota exceeded error by pausing the script for 24 hours."""
+    error_msg = "YouTube API quota exceeded. Pausing script for 24 hours."
+    print(f"{RED}❌ {error_msg}{RESET}")
+    send_discord_notification(error_msg, error=True)
+    
+    # Calculate time until tomorrow at the same hour
+    now = datetime.now()
+    tomorrow = now + timedelta(days=1)
+    resume_time = tomorrow.replace(hour=now.hour, minute=now.minute, second=0, microsecond=0)
+    
+    # If we're already past the same hour tomorrow, add 24 hours
+    if resume_time <= now:
+        resume_time += timedelta(days=1)
+    
+    wait_seconds = (resume_time - now).total_seconds()
+    
+    print(f"{YELLOW}⏳ Script will resume at: {resume_time.strftime('%Y-%m-%d %H:%M:%S')}{RESET}")
+    time.sleep(wait_seconds)
+    sys.exit(0)
+
 def upload_video(vod, uploaded_ids):
     try:
         with open(vod["info_path"], "r") as f:
@@ -230,7 +253,11 @@ def upload_video(vod, uploaded_ids):
             "-metaJSON", meta_path,
             "-playlistID", playlist_id,
             "-privacy", VIDEO_PRIVACY
-        ])
+        ], capture_output=True, text=True)
+
+        if "quotaExceeded" in result.stderr:
+            handle_quota_exceeded()
+            return False
 
         if result.returncode != 0:
             # If metadata upload fails, try with just the filename
@@ -250,7 +277,11 @@ def upload_video(vod, uploaded_ids):
                     "-metaJSON", meta_path,
                     "-playlistID", playlist_id,
                     "-privacy", VIDEO_PRIVACY
-                ])
+                ], capture_output=True, text=True)
+
+                if "quotaExceeded" in result.stderr:
+                    handle_quota_exceeded()
+                    return False
 
         if result.returncode == 0:
             uploaded_ids.append(vod["vod_id"])
