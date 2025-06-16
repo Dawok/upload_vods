@@ -16,8 +16,7 @@ TOKEN_CACHE = "request.token"            # Path to store OAuth2 token cache
 # Discord webhook configuration
 DISCORD_WEBHOOK_URL = ""  # Add your Discord webhook URL here
 
-# Upload limits
-MAX_UPLOADS = 6
+
 VIDEO_PRIVACY = "unlisted"  # Privacy status for uploaded videos (private, unlisted, or public)
 
 # Twitch API settings
