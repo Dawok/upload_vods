@@ -278,13 +278,15 @@ def main():
 
         print(f"{CYAN}📂 Scanning directory: {user_dir.name}{RESET}")
         user_name = user_dir.name
-        for vod_dir in user_dir.glob("*"):
+        
+        # Look for directories matching the pattern: YYYY-MM-DD-VODID-live-*
+        for vod_dir in user_dir.glob("*-*-*-*-live-*"):
             if not vod_dir.is_dir():
                 continue
 
-            # Extract VOD ID from directory name
+            # Extract VOD ID from directory name (it's the 4th part)
             try:
-                vod_id = vod_dir.name.split("-")[-1]
+                vod_id = vod_dir.name.split("-")[3]
                 if not vod_id.isdigit():
                     continue
             except:
@@ -295,7 +297,7 @@ def main():
                 continue
 
             # Find video and info files
-            video_files = list(vod_dir.glob("*.mp4"))
+            video_files = list(vod_dir.glob("*[*-video.mp4"))
             info_files = list(vod_dir.glob("*.json"))
 
             if not video_files or not info_files:
