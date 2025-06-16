@@ -269,19 +269,30 @@ def main():
         if not user_dir.is_dir() or user_dir.name.startswith("."):
             continue
 
+        print(f"{CYAN}📂 Scanning directory: {user_dir.name}{RESET}")
         user_name = user_dir.name
         for vod_dir in user_dir.glob("*"):
             if not vod_dir.is_dir():
                 continue
 
-            vod_id = vod_dir.name.split("-")[-1]
-            if vod_id in uploaded_ids:
+            # Extract VOD ID from directory name
+            try:
+                vod_id = vod_dir.name.split("-")[-1]
+                if not vod_id.isdigit():
+                    continue
+            except:
                 continue
 
-            video_path = next(vod_dir.glob("*.mp4"), None)
-            info_path = next(vod_dir.glob("*.json"), None)
+            if vod_id in uploaded_ids:
+                print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod_id}{RESET}")
+                continue
+
+            # Find video and info files
+            video_path = next(vod_dir.glob("*-video.mp4"), None)
+            info_path = next(vod_dir.glob("*-info.json"), None)
 
             if video_path and info_path:
+                print(f"{CYAN}📦 Found VOD to upload: {vod_id}{RESET}")
                 vods_to_upload.append({
                     "vod_id": vod_id,
                     "user_name": user_name,
