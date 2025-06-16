@@ -10,19 +10,15 @@ PLAYLISTS_FILE = "playlists.json"
 
 # YouTube uploader configuration
 YOUTUBEUPLOADER_BIN = "youtubeuploader"  # Path to youtubeuploader binary
-CLIENT_SECRETS = "client_secrets.json"   # Path to OAuth2 client secrets file
-TOKEN_CACHE = "token_cache.json"         # Path to store OAuth2 token cache
+CLIENT_SECRETS = "client_secrets.json"   # Path to OAuth client secrets file
+TOKEN_CACHE = "request.token"            # Path to token cache file
 
 # Discord webhook configuration
 DISCORD_WEBHOOK_URL = ""  # Add your Discord webhook URL here
 
 # Upload limits
 MAX_UPLOADS = 6
-VIDEO_PRIVACY = "unlisted"  # Privacy status for uploaded videos (private, unlisted, or public)
-
-# Twitch API settings
-TWITCH_CLIENT_ID = ""      # Your Twitch API client ID
-TWITCH_CLIENT_SECRET = ""  # Your Twitch API client secret
+VIDEO_PRIVACY = "unlisted"  # One of: "private", "unlisted", "public"
 
 # ANSI colors for console output
 GREEN = "\033[92m"
