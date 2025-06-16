@@ -210,6 +210,7 @@ def upload_video(vod, uploaded_ids):
     print(f"{CYAN}⬆️  Uploading: {metadata['title']}{RESET}")
 
     try:
+        # First try with metadata
         result = subprocess.run([
             YOUTUBEUPLOADER_BIN,
             "-secrets", CLIENT_SECRETS,
@@ -218,7 +219,43 @@ def upload_video(vod, uploaded_ids):
             "-metaJSON", meta_path,
             "-playlistID", playlist_id,
             "-privacy", VIDEO_PRIVACY
-        ])
+        ], capture_output=True, text=True)
+
+        # Check for quota exceeded in the output
+        if "quotaExceeded" in result.stderr or "quotaExceeded" in result.stdout:
+            set_quota_cooldown()
+            error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
+            print(f"{RED}❌ {error_msg}{RESET}")
+            send_discord_notification(error_msg, error=True)
+            return False
+
+        if result.returncode != 0:
+            # If metadata upload fails for other reasons, try with just the filename
+            print(f"{YELLOW}⚠️  Metadata upload failed, trying with filename only{RESET}")
+            filename_title = get_title_from_filename(vod["video_path"].name)
+            if filename_title:
+                filename_title = clean_title(f"{metadata['title'].split(' ', 1)[0]} {filename_title}")
+                metadata["title"] = filename_title
+                with open(meta_path, "w") as f:
+                    json.dump(metadata, f)
+                
+                result = subprocess.run([
+                    YOUTUBEUPLOADER_BIN,
+                    "-secrets", CLIENT_SECRETS,
+                    "-cache", TOKEN_CACHE,
+                    "-filename", str(vod["video_path"]),
+                    "-metaJSON", meta_path,
+                    "-playlistID", playlist_id,
+                    "-privacy", VIDEO_PRIVACY
+                ], capture_output=True, text=True)
+
+                # Check for quota exceeded in the second attempt
+                if "quotaExceeded" in result.stderr or "quotaExceeded" in result.stdout:
+                    set_quota_cooldown()
+                    error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
+                    print(f"{RED}❌ {error_msg}{RESET}")
+                    send_discord_notification(error_msg, error=True)
+                    return False
 
         if result.returncode == 0:
             uploaded_ids.append(vod["vod_id"])
@@ -226,22 +263,18 @@ def upload_video(vod, uploaded_ids):
             print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
             return True
         else:
-            error_output = str(result.stderr)
-            if "quotaExceeded" in error_output:
-                set_quota_cooldown()
-                error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
-            else:
-                error_msg = f"Upload failed for: {vod['vod_id']}"
+            error_msg = f"Upload failed for: {vod['vod_id']}"
             print(f"{RED}❌ {error_msg}{RESET}")
             send_discord_notification(error_msg, error=True)
             return False
     except Exception as e:
-        error_msg = str(e)
-        if "quotaExceeded" in error_msg:
+        if "quotaExceeded" in str(e):
             set_quota_cooldown()
             error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
-        else:
-            error_msg = f"Error during upload of {vod['vod_id']}: {error_msg}"
+            print(f"{RED}❌ {error_msg}{RESET}")
+            send_discord_notification(error_msg, error=True)
+            return False
+        error_msg = f"Error during upload of {vod['vod_id']}: {str(e)}"
         print(f"{RED}❌ {error_msg}{RESET}")
         send_discord_notification(error_msg, error=True)
         return False
@@ -265,55 +298,29 @@ def main():
     vods_to_upload = []
 
     # Scan for VODs
-    base_dir = Path(BASE_DIR)
-    if not base_dir.exists():
-        print(f"{RED}❌ Base directory not found: {BASE_DIR}{RESET}")
-        return
-
-    print(f"{CYAN}📂 Scanning for VODs in {BASE_DIR}...{RESET}")
-    
-    for user_dir in base_dir.glob("*"):
+    for user_dir in Path(".").glob("*"):
         if not user_dir.is_dir() or user_dir.name.startswith("."):
             continue
 
-        print(f"{CYAN}📂 Scanning directory: {user_dir.name}{RESET}")
         user_name = user_dir.name
-        
-        # Look for directories matching the pattern: YYYY-MM-DD-VODID-live-*
-        for vod_dir in user_dir.glob("*-*-*-*-live-*"):
+        for vod_dir in user_dir.glob("*"):
             if not vod_dir.is_dir():
                 continue
 
-            # Extract VOD ID from directory name (it's the 4th part)
-            try:
-                vod_id = vod_dir.name.split("-")[3]
-                if not vod_id.isdigit():
-                    continue
-            except:
-                continue
-
+            vod_id = vod_dir.name.split("-")[-1]
             if vod_id in uploaded_ids:
-                print(f"{YELLOW}⏭️  Skipping (already uploaded): {vod_id}{RESET}")
                 continue
 
-            # Find video and info files
-            video_files = list(vod_dir.glob("*[*-video.mp4"))
-            info_files = list(vod_dir.glob("*.json"))
+            video_path = next(vod_dir.glob("*.mp4"), None)
+            info_path = next(vod_dir.glob("*.json"), None)
 
-            if not video_files or not info_files:
-                continue
-
-            # Get the first video and info file
-            video_path = video_files[0]
-            info_path = info_files[0]
-
-            print(f"{CYAN}📦 Found VOD to upload: {vod_id} ({video_path.name}){RESET}")
-            vods_to_upload.append({
-                "vod_id": vod_id,
-                "user_name": user_name,
-                "video_path": video_path,
-                "info_path": info_path
-            })
+            if video_path and info_path:
+                vods_to_upload.append({
+                    "vod_id": vod_id,
+                    "user_name": user_name,
+                    "video_path": video_path,
+                    "info_path": info_path
+                })
 
     if not vods_to_upload:
         print(f"{GREEN}✅ No new VODs to upload{RESET}")
