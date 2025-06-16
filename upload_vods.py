@@ -219,18 +219,10 @@ def upload_video(vod, uploaded_ids):
             "-metaJSON", meta_path,
             "-playlistID", playlist_id,
             "-privacy", VIDEO_PRIVACY
-        ], capture_output=True, text=True)
-
-        # Check for quota exceeded in the output
-        if "quotaExceeded" in result.stderr or "quotaExceeded" in result.stdout:
-            set_quota_cooldown()
-            error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
-            print(f"{RED}❌ {error_msg}{RESET}")
-            send_discord_notification(error_msg, error=True)
-            return False
+        ])
 
         if result.returncode != 0:
-            # If metadata upload fails for other reasons, try with just the filename
+            # If metadata upload fails, try with just the filename
             print(f"{YELLOW}⚠️  Metadata upload failed, trying with filename only{RESET}")
             filename_title = get_title_from_filename(vod["video_path"].name)
             if filename_title:
@@ -247,15 +239,7 @@ def upload_video(vod, uploaded_ids):
                     "-metaJSON", meta_path,
                     "-playlistID", playlist_id,
                     "-privacy", VIDEO_PRIVACY
-                ], capture_output=True, text=True)
-
-                # Check for quota exceeded in the second attempt
-                if "quotaExceeded" in result.stderr or "quotaExceeded" in result.stdout:
-                    set_quota_cooldown()
-                    error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
-                    print(f"{RED}❌ {error_msg}{RESET}")
-                    send_discord_notification(error_msg, error=True)
-                    return False
+                ])
 
         if result.returncode == 0:
             uploaded_ids.append(vod["vod_id"])
@@ -263,6 +247,8 @@ def upload_video(vod, uploaded_ids):
             print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
             return True
         else:
+            if "quotaExceeded" in str(result.stderr):
+                set_quota_cooldown()
             error_msg = f"Upload failed for: {vod['vod_id']}"
             print(f"{RED}❌ {error_msg}{RESET}")
             send_discord_notification(error_msg, error=True)
@@ -270,10 +256,6 @@ def upload_video(vod, uploaded_ids):
     except Exception as e:
         if "quotaExceeded" in str(e):
             set_quota_cooldown()
-            error_msg = f"Upload failed: YouTube API quota exceeded. Will resume in 24 hours."
-            print(f"{RED}❌ {error_msg}{RESET}")
-            send_discord_notification(error_msg, error=True)
-            return False
         error_msg = f"Error during upload of {vod['vod_id']}: {str(e)}"
         print(f"{RED}❌ {error_msg}{RESET}")
         send_discord_notification(error_msg, error=True)

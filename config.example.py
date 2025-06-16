@@ -11,7 +11,7 @@ PLAYLISTS_FILE = "playlists.json"
 # YouTube uploader configuration
 YOUTUBEUPLOADER_BIN = "youtubeuploader"  # Path to youtubeuploader binary
 CLIENT_SECRETS = "client_secrets.json"   # Path to OAuth2 client secrets file
-TOKEN_CACHE = "request.token"            # Path to store OAuth2 token cache
+TOKEN_CACHE = "token_cache.json"         # Path to store OAuth2 token cache
 
 # Discord webhook configuration
 DISCORD_WEBHOOK_URL = ""  # Add your Discord webhook URL here
