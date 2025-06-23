@@ -443,4 +443,8 @@ def main():
         send_discord_notification(error_msg, error=True)
 
 if __name__ == "__main__":
+    if "--generate-token" in sys.argv:
+        get_youtube_client()
+        print(f"{GREEN}Token generated and saved as {TOKEN_CACHE}.{RESET}")
+        sys.exit(0)
     main()
