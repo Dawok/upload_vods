@@ -65,7 +65,11 @@ def get_youtube_client():
             SCOPES
         )
         print(f"\n{YELLOW}No valid OAuth token found. Please follow the instructions below to authenticate this server.{RESET}")
-        creds = flow.run_console()
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        print(f"\nGo to the following link in your browser:\n{auth_url}\n")
+        code = input("Enter the authorization code: ")
+        flow.fetch_token(code=code)
+        creds = flow.credentials
         with open(TOKEN_CACHE, "w") as token:
             token.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
