@@ -44,9 +44,21 @@ def get_youtube_client():
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
         except Exception as e:
-            send_discord_notification(f"Token file is invalid or expired: {str(e)}", error=True)
-            raise
-    else:
+            # If token is invalid, expired, or revoked, delete and prompt re-auth
+            error_str = str(e)
+            if 'invalid_grant' in error_str or 'expired' in error_str or 'revoked' in error_str:
+                os.remove(TOKEN_CACHE)
+                msg = (
+                    f"request.token is invalid, expired, or revoked. "
+                    f"User re-authentication required."
+                )
+                print(f"{YELLOW}{msg}{RESET}")
+                send_discord_notification(msg, error=True)
+                # Continue to OAuth flow below
+            else:
+                send_discord_notification(f"Token file is invalid: {error_str}", error=True)
+                raise
+    if not creds:
         flow = InstalledAppFlow.from_client_secrets_file(
             CLIENT_SECRETS, 
             SCOPES,
@@ -202,19 +214,14 @@ def get_or_create_playlist_id(user_name):
         return None
 
 def handle_quota_exceeded():
-    """Handle YouTube API quota exceeded error by pausing the script for 24 hours."""
-    error_msg = "YouTube API quota exceeded. Pausing script for 24 hours."
+    """Handle YouTube API quota exceeded error by pausing the script for the configured number of hours."""
+    error_msg = f"YouTube API quota exceeded. Pausing script for {QUOTA_WAIT_HOURS} hours."
     print(f"{RED}❌ {error_msg}{RESET}")
     send_discord_notification(error_msg, error=True)
     
-    # Calculate time until tomorrow at the same hour
+    # Calculate time until after the wait period
     now = datetime.now()
-    tomorrow = now + timedelta(days=1)
-    resume_time = tomorrow.replace(hour=now.hour, minute=now.minute, second=0, microsecond=0)
-    
-    # If we're already past the same hour tomorrow, add 24 hours
-    if resume_time <= now:
-        resume_time += timedelta(days=1)
+    resume_time = now + timedelta(hours=QUOTA_WAIT_HOURS)
     
     wait_seconds = (resume_time - now).total_seconds()
     

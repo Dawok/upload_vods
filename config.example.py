@@ -13,16 +13,19 @@ YOUTUBEUPLOADER_BIN = "youtubeuploader"  # Path to youtubeuploader binary
 CLIENT_SECRETS = "client_secrets.json"   # Path to OAuth client secrets file
 TOKEN_CACHE = "request.token"            # Path to token cache file
 
-# Discord webhook configuration
-DISCORD_WEBHOOK_URL = ""  # Add your Discord webhook URL here
+# Video settings
+VIDEO_PRIVACY = "unlisted"  # Options: "private", "unlisted", "public"
+QUOTA_WAIT_HOURS = 24  # Number of hours to wait when YouTube API quota is exceeded
+
+# Discord webhook URL for notifications
+DISCORD_WEBHOOK_URL = "your_discord_webhook_url_here"
 
 # Upload limits
 MAX_UPLOADS = 6
-VIDEO_PRIVACY = "unlisted"  # One of: "private", "unlisted", "public"
 
 # ANSI colors for console output
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-CYAN = "\033[96m"
-RESET = "\033[0m" 
+RESET = "\033[0m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+CYAN = "\033[36m" 
