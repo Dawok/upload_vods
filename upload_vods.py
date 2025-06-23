@@ -266,10 +266,47 @@ def upload_video(vod, uploaded_ids):
             handle_quota_exceeded()
             return False
 
+        # If metadata upload fails, try with just the filename
         if result.returncode != 0:
             print(f"{YELLOW}⚠️  Metadata upload failed, trying with filename only{RESET}")
             print(f"{RED}youtubeuploader stderr:{RESET}\n{result.stderr}")
             print(f"{RED}youtubeuploader stdout:{RESET}\n{result.stdout}")
+
+            # If the error is due to recordingDate parse error, remove it and use filename as title
+            if ("error parsing file" in result.stderr and "parsing time" in result.stderr):
+                print(f"{YELLOW}⚠️  Detected recordingDate parse error, removing recordingDate and using filename as title{RESET}")
+                filename_title = get_title_from_filename(vod["video_path"].name)
+                if filename_title:
+                    filename_title = clean_title(f"{metadata['title'].split(' ', 1)[0]} {filename_title}")
+                else:
+                    filename_title = metadata['title']
+                # Remove recordingDate from metadata
+                metadata.pop("recordingDate", None)
+                metadata["title"] = filename_title
+                with open(meta_path, "w") as f:
+                    json.dump(metadata, f)
+                result = subprocess.run([
+                    YOUTUBEUPLOADER_BIN,
+                    "-secrets", CLIENT_SECRETS,
+                    "-cache", TOKEN_CACHE,
+                    "-filename", str(vod["video_path"]),
+                    "-metaJSON", meta_path,
+                    "-playlistID", playlist_id,
+                    "-privacy", VIDEO_PRIVACY
+                ], capture_output=True, text=True)
+                if result.returncode == 0:
+                    uploaded_ids.append(vod["vod_id"])
+                    save_json_file(UPLOADED_IDS_FILE, uploaded_ids)
+                    print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
+                    return True
+                else:
+                    print(f"{RED}youtubeuploader stderr:{RESET}\n{result.stderr}")
+                    print(f"{RED}youtubeuploader stdout:{RESET}\n{result.stdout}")
+                    error_msg = f"Upload failed for: {vod['vod_id']}"
+                    print(f"{RED}❌ {error_msg}{RESET}")
+                    send_discord_notification(error_msg, error=True)
+                    return False
+
             filename_title = get_title_from_filename(vod["video_path"].name)
             if filename_title:
                 filename_title = clean_title(f"{metadata['title'].split(' ', 1)[0]} {filename_title}")
