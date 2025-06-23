@@ -142,11 +142,20 @@ def clean_title(title, max_length=100):
 
 def build_metadata(vod):
     info = vod["info"]
-    try:
-        dt = datetime.strptime(info.get("started_at", ""), "%Y-%m-%dT%H:%M:%SZ")
-        date_prefix = dt.strftime("%y%m%d")
-    except (ValueError, TypeError):
-        # Fallback to filename date if info date is invalid
+    # Try to get a valid date from started_at, created_at, or published_at
+    date_str = info.get("started_at") or info.get("created_at") or info.get("published_at")
+    date_prefix = None
+    recording_date = None
+    if date_str:
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
+            date_prefix = dt.strftime("%y%m%d")
+            recording_date = dt.strftime("%Y-%m-%d")
+        except Exception:
+            # fallback to filename date if parsing fails
+            filename_date = vod["video_path"].name.split(" ")[0]
+            date_prefix = filename_date.replace("-", "")[2:]  # Convert YYYY-MM-DD to YYMMDD
+    else:
         filename_date = vod["video_path"].name.split(" ")[0]
         date_prefix = filename_date.replace("-", "")[2:]  # Convert YYYY-MM-DD to YYMMDD
 
@@ -162,22 +171,24 @@ def build_metadata(vod):
     title = clean_title(f"{date_prefix} {title}")
 
     description = f"""Streamed by {vod['user_name']}
-Game: {info.get('game_name', 'Unknown')}
-Original broadcast: {info.get('started_at', 'unknown')}
+Game: {info.get('game_name', info.get('category', 'Unknown'))}
+Original broadcast: {date_str or 'unknown'}
 VOD ID: {vod['vod_id']}
 """
-    tags = [vod['user_name'], "Twitch VOD", info.get("game_name", "")]
+    tags = [vod['user_name'], "Twitch VOD", info.get("game_name", info.get("category", ""))]
     thumbnail_url = info.get("thumbnail_url", "").replace("{width}", "1280").replace("{height}", "720")
 
-    return {
+    meta = {
         "title": title,
         "description": description,
         "tags": tags,
         "language": info.get("language", "en"),
-        "recordingDate": info.get("started_at", "").split("T")[0],
         "thumbnail": thumbnail_url,
         "privacy": VIDEO_PRIVACY
     }
+    if recording_date:
+        meta["recordingDate"] = recording_date
+    return meta
 
 def get_or_create_playlist_id(user_name):
     playlists = load_json_file(PLAYLISTS_FILE)
