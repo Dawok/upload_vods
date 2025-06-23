@@ -260,6 +260,11 @@ with open('request.token', 'w') as f:
         time.sleep(5)
 
 def upload_video(vod, uploaded_ids):
+    # Ensure request.token exists before uploading
+    if not Path(TOKEN_CACHE).exists():
+        print(f"{YELLOW}No request.token found. Starting OAuth flow to generate one...{RESET}")
+        get_youtube_client()  # This will prompt for OAuth and create the token
+
     try:
         with open(vod["info_path"], "r") as f:
             vod["info"] = json.load(f)
