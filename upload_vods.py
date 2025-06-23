@@ -40,7 +40,8 @@ def send_discord_notification(message, error=False):
 
 def get_youtube_client():
     creds = None
-    if Path(TOKEN_CACHE).exists():
+    token_exists = Path(TOKEN_CACHE).exists()
+    if token_exists:
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_CACHE, SCOPES)
         except Exception as e:
