@@ -267,8 +267,9 @@ def upload_video(vod, uploaded_ids):
             return False
 
         if result.returncode != 0:
-            # If metadata upload fails, try with just the filename
             print(f"{YELLOW}⚠️  Metadata upload failed, trying with filename only{RESET}")
+            print(f"{RED}youtubeuploader stderr:{RESET}\n{result.stderr}")
+            print(f"{RED}youtubeuploader stdout:{RESET}\n{result.stdout}")
             filename_title = get_title_from_filename(vod["video_path"].name)
             if filename_title:
                 filename_title = clean_title(f"{metadata['title'].split(' ', 1)[0]} {filename_title}")
@@ -296,6 +297,8 @@ def upload_video(vod, uploaded_ids):
             print(f"{GREEN}✅ Upload complete: {vod['vod_id']}{RESET}")
             return True
         else:
+            print(f"{RED}youtubeuploader stderr:{RESET}\n{result.stderr}")
+            print(f"{RED}youtubeuploader stdout:{RESET}\n{result.stdout}")
             error_msg = f"Upload failed for: {vod['vod_id']}"
             print(f"{RED}❌ {error_msg}{RESET}")
             send_discord_notification(error_msg, error=True)
