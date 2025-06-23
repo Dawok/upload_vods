@@ -240,6 +240,31 @@ def handle_quota_exceeded():
     time.sleep(wait_seconds)
     sys.exit(0)
 
+def wait_for_new_token():
+    print(f"{YELLOW}Your OAuth token has expired or been revoked.{RESET}")
+    print(f"{YELLOW}To continue, you must generate a new request.token file using the OAuth flow on another machine.{RESET}")
+    print(f"{YELLOW}1. On your local machine, run the following Python code (with google-auth-oauthlib installed):{RESET}")
+    print(f"""
+from google_auth_oauthlib.flow import InstalledAppFlow
+flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', ['https://www.googleapis.com/auth/youtube'])
+creds = flow.run_console()
+with open('request.token', 'w') as f:
+    f.write(creds.to_json())
+    """)
+    print(f"{YELLOW}2. Upload the new request.token file to this server in the working directory.{RESET}")
+    print(f"{YELLOW}Waiting for new request.token...{RESET}")
+    import time
+    last_mtime = None
+    while True:
+        if os.path.exists(TOKEN_CACHE):
+            mtime = os.path.getmtime(TOKEN_CACHE)
+            if last_mtime is None:
+                last_mtime = mtime
+            elif mtime != last_mtime:
+                print(f"{GREEN}New request.token detected. Resuming...{RESET}")
+                break
+        time.sleep(5)
+
 def upload_video(vod, uploaded_ids):
     try:
         with open(vod["info_path"], "r") as f:
@@ -275,6 +300,13 @@ def upload_video(vod, uploaded_ids):
 
         if "quotaExceeded" in result.stderr:
             handle_quota_exceeded()
+            return False
+
+        # If token is expired or revoked, pause and wait for new token
+        if "invalid_grant" in result.stderr or "Token has been expired or revoked" in result.stderr:
+            print(f"{RED}❌ OAuth token expired or revoked. Pausing for manual intervention.{RESET}")
+            send_discord_notification("OAuth token expired or revoked. Waiting for new request.token upload.", error=True)
+            wait_for_new_token()
             return False
 
         # If metadata upload fails, try with just the filename
@@ -318,6 +350,13 @@ def upload_video(vod, uploaded_ids):
                     send_discord_notification(error_msg, error=True)
                     return False
 
+            # If token is expired or revoked, pause and wait for new token (fallback attempt)
+            if "invalid_grant" in result.stderr or "Token has been expired or revoked" in result.stderr:
+                print(f"{RED}❌ OAuth token expired or revoked. Pausing for manual intervention.{RESET}")
+                send_discord_notification("OAuth token expired or revoked. Waiting for new request.token upload.", error=True)
+                wait_for_new_token()
+                return False
+
             filename_title = get_title_from_filename(vod["video_path"].name)
             if filename_title:
                 filename_title = clean_title(f"{metadata['title'].split(' ', 1)[0]} {filename_title}")
@@ -337,6 +376,12 @@ def upload_video(vod, uploaded_ids):
 
                 if "quotaExceeded" in result.stderr:
                     handle_quota_exceeded()
+                    return False
+                # If token is expired or revoked, pause and wait for new token (fallback attempt)
+                if "invalid_grant" in result.stderr or "Token has been expired or revoked" in result.stderr:
+                    print(f"{RED}❌ OAuth token expired or revoked. Pausing for manual intervention.{RESET}")
+                    send_discord_notification("OAuth token expired or revoked. Waiting for new request.token upload.", error=True)
+                    wait_for_new_token()
                     return False
 
         if result.returncode == 0:
